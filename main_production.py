@@ -1,10 +1,10 @@
-# main_production.py - Versión optimizada para Railway con Supabase
+# main_production.py - Versión optimizada para Railway con Supabase + UPLOAD
 import os
 import ssl
 import socket
 import urllib3
 from urllib3.util.ssl_ import create_urllib3_context
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -12,6 +12,9 @@ import uvicorn
 from datetime import datetime
 import json
 import re
+import uuid
+import PyPDF2
+import io
 
 # Configuración SSL para Pinecone
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -78,9 +81,10 @@ app = FastAPI(
 )
 
 # CORS para permitir conexiones desde frontend
+cors_origins = os.getenv("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # En producción, especificar dominios exactos
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -99,6 +103,77 @@ class ChatResponse(BaseModel):
     timestamp: str
     user_id: str
     ai_model: str
+
+class UploadResponse(BaseModel):
+    success: bool
+    document_id: str
+    filename: str
+    message: str
+    file_size: int
+    file_type: str
+
+# 🆕 FUNCIONES PARA PROCESAMIENTO DE ARCHIVOS
+def extract_text_from_pdf(content: bytes) -> str:
+    """Extraer texto de PDF"""
+    try:
+        pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+        return text.strip()
+    except Exception as e:
+        print(f"❌ Error extracting PDF text: {e}")
+        return ""
+
+def extract_text_from_file(content: bytes, content_type: str, filename: str) -> str:
+    """Extraer texto según tipo de archivo"""
+    try:
+        if content_type == "application/pdf":
+            return extract_text_from_pdf(content)
+        elif content_type == "text/plain":
+            return content.decode('utf-8', errors='ignore')
+        elif filename.endswith('.txt'):
+            return content.decode('utf-8', errors='ignore')
+        else:
+            print(f"⚠️ Unsupported file type: {content_type}")
+            return f"Archivo {filename} - contenido no procesable automáticamente"
+    except Exception as e:
+        print(f"❌ Error extracting text: {e}")
+        return f"Error procesando archivo {filename}"
+
+def save_document_to_supabase(document_id: str, user_id: str, filename: str, content: str, file_size: int):
+    """Guardar documento en Supabase"""
+    try:
+        from supabase import create_client, Client
+        
+        # Usar variables de entorno de Supabase
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+        
+        if not supabase_url or not supabase_key:
+            print("❌ Supabase credentials not found")
+            raise Exception("Supabase not configured")
+        
+        supabase: Client = create_client(supabase_url, supabase_key)
+        
+        # Insertar documento
+        result = supabase.table('documents').insert({
+            'id': document_id,
+            'user_id': user_id,
+            'name': filename,
+            'content': content,
+            'size': file_size,
+            'status': 'processed',
+            'upload_date': datetime.now().isoformat(),
+            'created_at': datetime.now().isoformat()
+        }).execute()
+        
+        print(f"✅ Document saved to Supabase: {document_id}")
+        return result
+        
+    except Exception as e:
+        print(f"❌ Error saving to Supabase: {e}")
+        raise
 
 # Sinónimos y funciones de búsqueda
 SYNONYMS = {
@@ -280,7 +355,7 @@ async def root():
         "database": f"Supabase ({DATABASE_CONFIG['host']})" if DATABASE_AVAILABLE else "Disconnected",
         "vector_search": "Pinecone" if USE_PINECONE else "Disabled",
         "ai": "OpenAI GPT-3.5" if USE_OPENAI else "Local",
-        "version": "6.0.0-railway-supabase"
+        "version": "6.1.0-railway-supabase-upload"
     }
 
 @app.get("/health")
@@ -291,9 +366,76 @@ async def health():
         "services": {
             "database": "connected" if DATABASE_AVAILABLE else "disconnected",
             "pinecone": "enabled" if USE_PINECONE else "disabled",
-            "openai": "enabled" if USE_OPENAI else "disabled"
+            "openai": "enabled" if USE_OPENAI else "enabled"
         }
     }
+
+# 🆕 NUEVO ENDPOINT DE UPLOAD
+@app.post("/upload")
+async def upload_document(
+    file: UploadFile = File(...),
+    user_id: str = "119f7084-be9e-416f-81d6-3ffeadb062d5"
+):
+    """Subir y procesar documento"""
+    try:
+        print(f"📤 DEBUG: Uploading file: {file.filename}")
+        print(f"📤 DEBUG: Content type: {file.content_type}")
+        print(f"📤 DEBUG: User ID: {user_id}")
+        
+        # Validar archivo
+        allowed_types = [
+            'application/pdf',
+            'text/plain',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        ]
+        
+        if file.content_type not in allowed_types and not file.filename.endswith('.txt'):
+            raise HTTPException(
+                status_code=400, 
+                detail="Tipo de archivo no soportado. Solo PDF, TXT y DOCX."
+            )
+        
+        # Leer contenido
+        content = await file.read()
+        file_size = len(content)
+        
+        if file_size > 100 * 1024 * 1024:  # 100MB
+            raise HTTPException(status_code=400, detail="Archivo demasiado grande. Máximo 100MB.")
+        
+        # Extraer texto
+        text_content = extract_text_from_file(content, file.content_type, file.filename)
+        
+        if not text_content.strip():
+            raise HTTPException(status_code=400, detail="No se pudo extraer texto del archivo.")
+        
+        # Generar ID único
+        document_id = str(uuid.uuid4())
+        
+        # Guardar en Supabase
+        save_document_to_supabase(
+            document_id=document_id,
+            user_id=user_id,
+            filename=file.filename,
+            content=text_content,
+            file_size=file_size
+        )
+        
+        print(f"✅ SUCCESS: Document uploaded: {document_id}")
+        
+        return UploadResponse(
+            success=True,
+            document_id=document_id,
+            filename=file.filename,
+            message="Documento subido y procesado exitosamente",
+            file_size=file_size,
+            file_type=file.content_type
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ ERROR uploading document: {e}")
+        raise HTTPException(status_code=500, detail=f"Error procesando archivo: {str(e)}")
 
 @app.post("/chat")
 async def production_chat(request: ChatRequest):
