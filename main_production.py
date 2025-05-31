@@ -154,7 +154,13 @@ def save_document_to_supabase(document_id: str, user_id: str, filename: str, con
             print("❌ Supabase credentials not found")
             raise Exception("Supabase not configured")
         
-        supabase: Client = create_client(supabase_url, supabase_key)
+        # ✅ FIX: Línea 156 corregida
+        try:
+            supabase = create_client(supabase_url, supabase_key)
+            print(f"✅ Supabase client created successfully")
+        except Exception as client_error:
+            print(f"❌ Error creating Supabase client: {client_error}")
+            raise Exception(f"Supabase client initialization failed: {client_error}")
         
         # Insertar documento
         result = supabase.table('documents').insert({
