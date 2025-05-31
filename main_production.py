@@ -142,43 +142,28 @@ def extract_text_from_file(content: bytes, content_type: str, filename: str) -> 
         return f"Error procesando archivo {filename}"
 
 def save_document_to_supabase(document_id: str, user_id: str, filename: str, content: str, file_size: int):
-    """Guardar documento en Supabase"""
+    """Guardar documento usando database.py - VERSIÓN CORREGIDA"""
     try:
-        from supabase import create_client, Client
+        print(f"📤 DEBUG: Saving to database using database.py functions")
+        print(f"📤 DEBUG: Filename: {filename}")
+        print(f"📤 DEBUG: Content length: {len(content)} chars")
         
-        # Usar variables de entorno de Supabase
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_KEY")
+        # USAR LA FUNCIÓN DE database.py QUE YA FUNCIONA
+        from database import create_document
         
-        if not supabase_url or not supabase_key:
-            print("❌ Supabase credentials not found")
-            raise Exception("Supabase not configured")
+        result = create_document(
+            name=filename,
+            content=content,
+            size=file_size,
+            user_id=user_id,
+            metadata={'document_id': document_id}
+        )
         
-        # ✅ FIX: Línea 156 corregida
-        try:
-            supabase = create_client(supabase_url, supabase_key)
-            print(f"✅ Supabase client created successfully")
-        except Exception as client_error:
-            print(f"❌ Error creating Supabase client: {client_error}")
-            raise Exception(f"Supabase client initialization failed: {client_error}")
-        
-        # Insertar documento
-        result = supabase.table('documents').insert({
-            'id': document_id,
-            'user_id': user_id,
-            'name': filename,
-            'content': content,
-            'size': file_size,
-            'status': 'processed',
-            'upload_date': datetime.now().isoformat(),
-            'created_at': datetime.now().isoformat()
-        }).execute()
-        
-        print(f"✅ Document saved to Supabase: {document_id}")
+        print(f"✅ SUCCESS: Document saved via database.py: {result}")
         return result
         
     except Exception as e:
-        print(f"❌ Error saving to Supabase: {e}")
+        print(f"❌ Error saving via database.py: {e}")
         raise
 
 # Sinónimos y funciones de búsqueda
