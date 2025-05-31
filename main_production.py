@@ -80,14 +80,25 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS para permitir conexiones desde frontend
-cors_origins = os.getenv("CORS_ORIGINS", "*").split(",")
+# CORS para permitir conexiones desde frontend - VERSIÓN CORREGIDA
+cors_origins = os.getenv("CORS_ORIGINS", "*")
+print(f"🔍 DEBUG: CORS_ORIGINS value: {cors_origins}")
+
+# Configurar orígenes permitidos
+if cors_origins == "*":
+    allowed_origins = ["*"]
+    print("🌐 CORS: Allowing all origins (*)")
+else:
+    allowed_origins = cors_origins.split(",")
+    print(f"🌐 CORS: Allowing specific origins: {allowed_origins}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 # Modelos
