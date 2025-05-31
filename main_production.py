@@ -1,4 +1,4 @@
-# main_production.py - Versión optimizada para Railway con Supabase + UPLOAD
+# main_production.py - Versión optimizada para Railway con Supabase + EXCEL SUPPORT
 import os
 import ssl
 import socket
@@ -15,6 +15,16 @@ import re
 import uuid
 import PyPDF2
 import io
+
+# 🆕 NUEVO: Importación para Excel
+try:
+    import openpyxl
+    from openpyxl import load_workbook
+    EXCEL_AVAILABLE = True
+    print("✅ Excel processor available (openpyxl)")
+except ImportError:
+    EXCEL_AVAILABLE = False
+    print("⚠️ Excel processor not available - install openpyxl")
 
 # Configuración SSL para Pinecone
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -74,8 +84,8 @@ if USE_OPENAI:
 # Crear app FastAPI
 app = FastAPI(
     title="🤖 RAG Service Production",
-    description="Servicio RAG híbrido en producción con Railway + Supabase",
-    version="6.0.0",
+    description="Servicio RAG híbrido en producción con Railway + Supabase + Excel",
+    version="6.1.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -123,7 +133,8 @@ class UploadResponse(BaseModel):
     file_size: int
     file_type: str
 
-# 🆕 FUNCIONES PARA PROCESAMIENTO DE ARCHIVOS
+# 🆕 FUNCIONES PARA PROCESAMIENTO DE ARCHIVOS CON EXCEL
+
 def extract_text_from_pdf(content: bytes) -> str:
     """Extraer texto de PDF"""
     try:
@@ -136,21 +147,150 @@ def extract_text_from_pdf(content: bytes) -> str:
         print(f"❌ Error extracting PDF text: {e}")
         return ""
 
-def extract_text_from_file(content: bytes, content_type: str, filename: str) -> str:
-    """Extraer texto según tipo de archivo"""
+def extract_text_from_excel(content: bytes) -> str:
+    """🆕 NUEVO: Extraer texto de archivos Excel (.xlsx, .xls)"""
+    if not EXCEL_AVAILABLE:
+        return "Error: openpyxl no está instalado para procesar archivos Excel"
+    
     try:
-        if content_type == "application/pdf":
-            return extract_text_from_pdf(content)
-        elif content_type == "text/plain":
-            return content.decode('utf-8', errors='ignore')
-        elif filename.endswith('.txt'):
-            return content.decode('utf-8', errors='ignore')
-        else:
-            print(f"⚠️ Unsupported file type: {content_type}")
-            return f"Archivo {filename} - contenido no procesable automáticamente"
+        # Cargar el archivo Excel
+        workbook = load_workbook(io.BytesIO(content), data_only=True)
+        
+        print(f"📊 Procesando Excel con {len(workbook.sheetnames)} hojas")
+        
+        # Texto extraído
+        extracted_text = "=== ARCHIVO EXCEL ===\n"
+        extracted_text += f"Hojas disponibles: {', '.join(workbook.sheetnames)}\n\n"
+        
+        # Procesar cada hoja
+        for sheet_name in workbook.sheetnames:
+            sheet = workbook[sheet_name]
+            extracted_text += f"=== HOJA: {sheet_name} ===\n"
+            
+            # Obtener dimensiones de datos
+            max_row = sheet.max_row
+            max_col = sheet.max_column
+            
+            print(f"📋 Hoja '{sheet_name}': {max_row} filas x {max_col} columnas")
+            
+            # Extraer encabezados (primera fila)
+            headers = []
+            for col in range(1, min(max_col + 1, 50)):  # Limitar a 50 columnas
+                cell_value = sheet.cell(row=1, column=col).value
+                if cell_value is not None:
+                    headers.append(str(cell_value))
+                else:
+                    headers.append(f"Col{col}")
+            
+            if headers:
+                extracted_text += f"COLUMNAS: {' | '.join(headers)}\n"
+            
+            # Extraer datos (limitar filas para evitar textos enormes)
+            rows_to_process = min(max_row, 200)  # Máximo 200 filas
+            data_rows = 0
+            
+            for row in range(2, rows_to_process + 1):  # Empezar desde fila 2 (después de headers)
+                row_data = []
+                has_data = False
+                
+                for col in range(1, min(max_col + 1, 50)):  # Limitar columnas
+                    cell_value = sheet.cell(row=row, column=col).value
+                    if cell_value is not None:
+                        row_data.append(str(cell_value))
+                        has_data = True
+                    else:
+                        row_data.append("")
+                
+                # Solo agregar filas que tengan datos
+                if has_data:
+                    extracted_text += f"FILA {row}: {' | '.join(row_data)}\n"
+                    data_rows += 1
+            
+            # Información adicional si hay más filas
+            if max_row > rows_to_process:
+                extracted_text += f"\n... y {max_row - rows_to_process} filas adicionales\n"
+            
+            extracted_text += f"\nRESUMEN HOJA '{sheet_name}': {data_rows} filas con datos\n\n"
+        
+        # Metadatos finales
+        extracted_text += "=== INFORMACIÓN DEL ARCHIVO ===\n"
+        extracted_text += f"Total de hojas: {len(workbook.sheetnames)}\n"
+        extracted_text += f"Hojas procesadas: {', '.join(workbook.sheetnames)}\n"
+        
+        print(f"✅ Excel procesado: {len(extracted_text)} caracteres extraídos")
+        return extracted_text
+        
     except Exception as e:
-        print(f"❌ Error extracting text: {e}")
-        return f"Error procesando archivo {filename}"
+        error_msg = f"Error procesando archivo Excel: {str(e)}"
+        print(f"❌ {error_msg}")
+        return error_msg
+
+def extract_text_from_file(content: bytes, content_type: str, filename: str) -> str:
+    """🆕 MEJORADO: Extraer texto según tipo de archivo - CON SOPORTE EXCEL"""
+    try:
+        print(f"📄 Procesando: {filename} ({content_type})")
+        
+        # 🆕 EXCEL FILES - NUEVA FUNCIONALIDAD
+        if (content_type in [
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # .xlsx
+            'application/vnd.ms-excel'  # .xls
+        ] or filename.lower().endswith(('.xlsx', '.xls'))):
+            print("📊 Detectado archivo Excel")
+            return extract_text_from_excel(content)
+        
+        # PDF Files
+        elif content_type == "application/pdf" or filename.lower().endswith('.pdf'):
+            print("📄 Detectado archivo PDF")
+            return extract_text_from_pdf(content)
+        
+        # Text Files
+        elif content_type == "text/plain" or filename.lower().endswith('.txt'):
+            print("📝 Detectado archivo de texto")
+            return content.decode('utf-8', errors='ignore')
+        
+        # Word Files (básico)
+        elif (content_type in [
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/msword'
+        ] or filename.lower().endswith(('.docx', '.doc'))):
+            print("📝 Detectado archivo Word")
+            # Por ahora, tratarlos como texto plano básico
+            try:
+                return content.decode('utf-8', errors='ignore')
+            except:
+                return f"Archivo Word detectado: {filename} - contenido no procesable automáticamente"
+        
+        # JSON Files
+        elif content_type == "application/json" or filename.lower().endswith('.json'):
+            print("📋 Detectado archivo JSON")
+            try:
+                json_data = json.loads(content.decode('utf-8'))
+                return f"=== ARCHIVO JSON ===\n{json.dumps(json_data, indent=2, ensure_ascii=False)}"
+            except:
+                return f"Archivo JSON detectado: {filename} - formato inválido"
+        
+        # CSV Files
+        elif content_type == "text/csv" or filename.lower().endswith('.csv'):
+            print("📊 Detectado archivo CSV")
+            try:
+                csv_text = content.decode('utf-8', errors='ignore')
+                return f"=== ARCHIVO CSV ===\n{csv_text}"
+            except:
+                return f"Archivo CSV detectado: {filename} - contenido no procesable"
+        
+        # Otros tipos
+        else:
+            print(f"⚠️ Tipo de archivo no específicamente soportado: {content_type}")
+            # Intentar como texto plano
+            try:
+                return content.decode('utf-8', errors='ignore')
+            except:
+                return f"Archivo {filename} - contenido no procesable automáticamente"
+                
+    except Exception as e:
+        error_msg = f"Error procesando archivo {filename}: {str(e)}"
+        print(f"❌ {error_msg}")
+        return error_msg
 
 def save_document_to_supabase(document_id: str, user_id: str, filename: str, content: str, file_size: int):
     """Guardar documento usando database.py - VERSIÓN CORREGIDA"""
@@ -351,13 +491,14 @@ Responde en español, cita las fuentes y sé específico."""
 @app.get("/")
 async def root():
     return {
-        "message": "🤖 RAG Service Production - Railway Deployment",
+        "message": "🤖 RAG Service Production - Railway Deployment + Excel Support",
         "status": "active",
         "environment": "production",
         "database": f"Supabase ({DATABASE_CONFIG['host']})" if DATABASE_AVAILABLE else "Disconnected",
         "vector_search": "Pinecone" if USE_PINECONE else "Disabled",
         "ai": "OpenAI GPT-3.5" if USE_OPENAI else "Local",
-        "version": "6.1.0-railway-supabase-upload"
+        "excel_support": "Available" if EXCEL_AVAILABLE else "Not Available",
+        "version": "6.2.0-railway-supabase-excel"
     }
 
 @app.get("/health")
@@ -368,34 +509,60 @@ async def health():
         "services": {
             "database": "connected" if DATABASE_AVAILABLE else "disconnected",
             "pinecone": "enabled" if USE_PINECONE else "disabled",
-            "openai": "enabled" if USE_OPENAI else "enabled"
+            "openai": "enabled" if USE_OPENAI else "enabled",
+            "excel": "enabled" if EXCEL_AVAILABLE else "disabled"
         }
     }
 
-# 🆕 NUEVO ENDPOINT DE UPLOAD
+# 🆕 ENDPOINT DE UPLOAD MEJORADO CON EXCEL
 @app.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
     user_id: str = "119f7084-be9e-416f-81d6-3ffeadb062d5"
 ):
-    """Subir y procesar documento"""
+    """🆕 MEJORADO: Subir y procesar documento - CON SOPORTE PARA EXCEL"""
     try:
         print(f"📤 DEBUG: Uploading file: {file.filename}")
         print(f"📤 DEBUG: Content type: {file.content_type}")
         print(f"📤 DEBUG: User ID: {user_id}")
         
-        # Validar archivo
+        # 🆕 TIPOS DE ARCHIVO PERMITIDOS AMPLIADOS CON EXCEL
         allowed_types = [
+            # PDFs
             'application/pdf',
+            
+            # Texto
             'text/plain',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            
+            # Microsoft Office
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
+            'application/msword',  # .doc
+            
+            # 🆕 EXCEL - NUEVOS TIPOS
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # .xlsx
+            'application/vnd.ms-excel',  # .xls
+            
+            # Datos
+            'application/json',
+            'text/csv'
         ]
         
-        if file.content_type not in allowed_types and not file.filename.endswith('.txt'):
+        # Verificar extensión también (más confiable que content-type)
+        allowed_extensions = ['.pdf', '.txt', '.docx', '.doc', '.xlsx', '.xls', '.json', '.csv']
+        file_extension = '.' + file.filename.lower().split('.')[-1] if '.' in file.filename else ''
+        
+        # Validación más flexible
+        type_valid = file.content_type in allowed_types
+        extension_valid = file_extension in allowed_extensions
+        
+        if not (type_valid or extension_valid):
             raise HTTPException(
                 status_code=400, 
-                detail="Tipo de archivo no soportado. Solo PDF, TXT y DOCX."
+                detail=f"Tipo de archivo no soportado: {file.content_type}. "
+                       f"Formatos permitidos: PDF, TXT, DOCX, DOC, XLSX, XLS, JSON, CSV"
             )
+        
+        print(f"✅ Archivo validado: tipo={type_valid}, extensión={extension_valid}")
         
         # Leer contenido
         content = await file.read()
@@ -404,16 +571,18 @@ async def upload_document(
         if file_size > 100 * 1024 * 1024:  # 100MB
             raise HTTPException(status_code=400, detail="Archivo demasiado grande. Máximo 100MB.")
         
-        # Extraer texto
+        # 🆕 EXTRAER TEXTO CON SOPORTE MEJORADO PARA EXCEL
         text_content = extract_text_from_file(content, file.content_type, file.filename)
         
         if not text_content.strip():
             raise HTTPException(status_code=400, detail="No se pudo extraer texto del archivo.")
         
+        print(f"📊 Texto extraído: {len(text_content)} caracteres")
+        
         # Generar ID único
         document_id = str(uuid.uuid4())
         
-        # Guardar en Supabase
+        # Guardar en Supabase usando database.py
         save_document_to_supabase(
             document_id=document_id,
             user_id=user_id,
@@ -464,7 +633,7 @@ async def production_chat(request: ChatRequest):
                 answer=answer,
                 sources=json.dumps(sources),
                 user_id=request.user_id,
-                ai_model='production-rag-railway-supabase'
+                ai_model='production-rag-railway-supabase-excel'
             )
         else:
             conv_result = {"id": "error", "timestamp": datetime.now()}
@@ -476,7 +645,7 @@ async def production_chat(request: ChatRequest):
             sources=sources,
             timestamp=conv_result['timestamp'].isoformat() if hasattr(conv_result['timestamp'], 'isoformat') else str(conv_result['timestamp']),
             user_id=request.user_id,
-            ai_model='production-rag-railway-supabase'
+            ai_model='production-rag-railway-supabase-excel'
         )
         
     except Exception as e:
