@@ -13,12 +13,10 @@ from pydantic import BaseModel
 import openai
 import logging
 
-# Imports de módulos locales
-from database import create_document, search_documents
+# Imports de módulos locales - CORREGIDO
+from database import create_document, get_documents_by_user, search_similar_documents
 from processors.base_processor import ProcessorRegistry
 from processors.excel_processor import ExcelProcessor
-# from processors.pdf_processor import PDFProcessor  # Se agregaría después
-# from processors.word_processor import WordProcessor  # Se agregaría después
 
 # Configuración de logging
 logging.basicConfig(level=logging.INFO)
@@ -64,8 +62,6 @@ processor_registry = ProcessorRegistry()
 
 # Registrar procesadores disponibles
 processor_registry.register(ExcelProcessor())
-# processor_registry.register(PDFProcessor())      # Se agregaría después
-# processor_registry.register(WordProcessor())     # Se agregaría después
 
 logger.info(f"🏗️ Initialized with {len(processor_registry.processors)} processors")
 
@@ -81,6 +77,49 @@ class UploadResponse(BaseModel):
     message: str
     file_size: int
     processor_used: str
+
+# FUNCIÓN DE BÚSQUEDA TEMPORAL (hasta que esté en database.py)
+def search_documents(query: str, user_id: str):
+    """
+    Función temporal de búsqueda de documentos
+    Busca documentos por user_id y filtra por relevancia básica
+    """
+    try:
+        # Obtener todos los documentos del usuario
+        all_docs = get_documents_by_user(user_id)
+        
+        if not all_docs:
+            return []
+        
+        # Filtro básico por palabras clave
+        query_words = query.lower().split()
+        relevant_docs = []
+        
+        for doc in all_docs:
+            content_lower = doc.get('content', '').lower()
+            name_lower = doc.get('name', '').lower()
+            
+            # Calcular relevancia básica
+            relevance_score = 0
+            for word in query_words:
+                if word in content_lower:
+                    relevance_score += content_lower.count(word)
+                if word in name_lower:
+                    relevance_score += 5  # Bonus por estar en el nombre
+            
+            if relevance_score > 0:
+                doc['relevance_score'] = relevance_score
+                relevant_docs.append(doc)
+        
+        # Ordenar por relevancia
+        relevant_docs.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
+        
+        logger.info(f"🔍 Found {len(relevant_docs)} relevant documents for query: {query}")
+        return relevant_docs[:5]  # Top 5 más relevantes
+        
+    except Exception as e:
+        logger.error(f"❌ Error searching documents: {e}")
+        return []
 
 # ENDPOINTS
 
@@ -367,8 +406,6 @@ def save_document_to_supabase(document_id: str, user_id: str, filename: str, con
         logger.info(f"📤 DEBUG: Content length: {len(content)} chars")
         
         # USAR LA FUNCIÓN DE database.py QUE YA FUNCIONA
-        from database import create_document
-        
         result = create_document(
             name=filename,
             content=content,
