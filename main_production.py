@@ -186,12 +186,12 @@ SYNONYMS = {
     'sistema': ['sistema', 'plataforma', 'herramienta', 'aplicación']
 }
 
-def expand_query_terms(question: str) -> set:
+def expand_query_terms(message: str) -> set:  # ✅ CAMBIADO: era "question", ahora "message"
     """Expandir términos de búsqueda"""
-    question_lower = question.lower()
+    message_lower = message.lower()  # ✅ CAMBIADO: era "question_lower", ahora "message_lower"
     expanded_terms = set()
     
-    original_words = re.findall(r'\b\w+\b', question_lower)
+    original_words = re.findall(r'\b\w+\b', message_lower)  # ✅ CAMBIADO
     expanded_terms.update(original_words)
     
     for word in original_words:
@@ -207,21 +207,21 @@ def expand_query_terms(question: str) -> set:
     
     return expanded_terms - stop_words
 
-def calculate_relevance(content: str, doc_name: str, question_terms: set) -> float:
+def calculate_relevance(content: str, doc_name: str, message_terms: set) -> float:  # ✅ CAMBIADO: era "question_terms", ahora "message_terms"
     """Calcular relevancia"""
     content_lower = content.lower()
     doc_name_lower = doc_name.lower()
     
     content_words = set(re.findall(r'\b\w+\b', content_lower))
-    exact_matches = len(question_terms.intersection(content_words))
-    content_relevance = exact_matches / max(len(question_terms), 1) if question_terms else 0
+    exact_matches = len(message_terms.intersection(content_words))  # ✅ CAMBIADO
+    content_relevance = exact_matches / max(len(message_terms), 1) if message_terms else 0  # ✅ CAMBIADO
     
     doc_words = set(re.findall(r'\b\w+\b', doc_name_lower.replace('_', ' ').replace('.', ' ')))
-    title_matches = len(question_terms.intersection(doc_words))
-    title_relevance = (title_matches / max(len(question_terms), 1)) * 0.3 if question_terms else 0
+    title_matches = len(message_terms.intersection(doc_words))  # ✅ CAMBIADO
+    title_relevance = (title_matches / max(len(message_terms), 1)) * 0.3 if message_terms else 0  # ✅ CAMBIADO
     
     frequency_bonus = 0
-    for term in question_terms:
+    for term in message_terms:  # ✅ CAMBIADO
         frequency_bonus += content_lower.count(term) * 0.05
     
     document_type_bonus = 0
@@ -233,18 +233,18 @@ def calculate_relevance(content: str, doc_name: str, question_terms: set) -> flo
     total_relevance = content_relevance + title_relevance + min(frequency_bonus, 0.3) + document_type_bonus
     return min(total_relevance, 1.0)
 
-def production_search(question: str, user_id: str = None) -> List[dict]:
+def production_search(message: str, user_id: str = None) -> List[dict]:  # ✅ CAMBIADO: era "question", ahora "message"
     """Búsqueda optimizada para producción usando Supabase"""
     try:
-        print(f"🔍 DEBUG: Searching for question: {question}")
+        print(f"🔍 DEBUG: Searching for message: {message}")  # ✅ CAMBIADO
         print(f"🔍 DEBUG: Using user_id: {user_id}")
         
         if not DATABASE_AVAILABLE:
             print("❌ ERROR: Database not available")
             return []
             
-        question_terms = expand_query_terms(question)
-        print(f"🔍 DEBUG: Expanded terms: {question_terms}")
+        message_terms = expand_query_terms(message)  # ✅ CAMBIADO
+        print(f"🔍 DEBUG: Expanded terms: {message_terms}")  # ✅ CAMBIADO
         
         # USAR FUNCIÓN DE database.py (CON SUPABASE)
         docs_data = get_documents(user_id)
@@ -266,7 +266,7 @@ def production_search(question: str, user_id: str = None) -> List[dict]:
                     continue
                     
                 content = doc_content['content']
-                relevance = calculate_relevance(content, doc['name'], question_terms)
+                relevance = calculate_relevance(content, doc['name'], message_terms)  # ✅ CAMBIADO
                 
                 if relevance > 0.01:
                     # Extraer mejor fragmento
@@ -277,7 +277,7 @@ def production_search(question: str, user_id: str = None) -> List[dict]:
                     for sentence in sentences[:20]:
                         sentence_lower = sentence.lower()
                         sentence_words = set(re.findall(r'\b\w+\b', sentence_lower))
-                        matches = len(question_terms.intersection(sentence_words))
+                        matches = len(message_terms.intersection(sentence_words))  # ✅ CAMBIADO
                         
                         if matches > best_score:
                             best_score = matches
@@ -306,7 +306,7 @@ def production_search(question: str, user_id: str = None) -> List[dict]:
         print(f"❌ Error en búsqueda: {e}")
         return []
 
-def generate_production_answer(question: str, relevant_docs: List[dict]) -> str:
+def generate_production_answer(message: str, relevant_docs: List[dict]) -> str:  # ✅ CAMBIADO: era "question", ahora "message"
     """Generar respuesta para producción"""
     if not relevant_docs:
         return "Lo siento, no encontré información relevante en los documentos disponibles."
@@ -322,9 +322,9 @@ def generate_production_answer(question: str, relevant_docs: List[dict]) -> str:
 
 {context}
 
-PREGUNTA: {question}
+PREGUNTA: {message}
 
-Responde en español, cita las fuentes y sé específico."""
+Responde en español, cita las fuentes y sé específico."""  # ✅ CAMBIADO
 
             response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
