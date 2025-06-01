@@ -1,6 +1,6 @@
 """
-🚀 FastAPI RAG Service - Versión Modular y Escalable
-Arquitectura limpia con procesadores modulares para diferentes tipos de archivos
+🚀 FastAPI RAG Service - Versión Modular Mínima
+Solo usando funciones que existen en database.py
 """
 
 import os
@@ -13,8 +13,8 @@ from pydantic import BaseModel
 import openai
 import logging
 
-# Imports de módulos locales - CORREGIDO
-from database import create_document, get_documents_by_user, search_similar_documents
+# Import solo la función que sabemos que existe
+from database import create_document
 from processors.base_processor import ProcessorRegistry
 from processors.excel_processor import ExcelProcessor
 
@@ -25,11 +25,11 @@ logger = logging.getLogger(__name__)
 # Configuración de la aplicación
 app = FastAPI(
     title="🤖 RAG Service - Modular Architecture",
-    description="Sistema RAG empresarial con arquitectura modular para múltiples tipos de archivos",
-    version="7.0.0-modular"
+    description="Sistema RAG empresarial con arquitectura modular",
+    version="7.0.0-modular-minimal"
 )
 
-# CORS configuración mejorada
+# CORS configuración
 cors_origins = os.getenv("CORS_ORIGINS", "*")
 logger.info(f"🔍 DEBUG: CORS_ORIGINS value: {cors_origins}")
 
@@ -59,8 +59,6 @@ logger.info("✅ OpenAI configurado para producción")
 
 # Inicializar registro de procesadores
 processor_registry = ProcessorRegistry()
-
-# Registrar procesadores disponibles
 processor_registry.register(ExcelProcessor())
 
 logger.info(f"🏗️ Initialized with {len(processor_registry.processors)} processors")
@@ -78,49 +76,6 @@ class UploadResponse(BaseModel):
     file_size: int
     processor_used: str
 
-# FUNCIÓN DE BÚSQUEDA TEMPORAL (hasta que esté en database.py)
-def search_documents(query: str, user_id: str):
-    """
-    Función temporal de búsqueda de documentos
-    Busca documentos por user_id y filtra por relevancia básica
-    """
-    try:
-        # Obtener todos los documentos del usuario
-        all_docs = get_documents_by_user(user_id)
-        
-        if not all_docs:
-            return []
-        
-        # Filtro básico por palabras clave
-        query_words = query.lower().split()
-        relevant_docs = []
-        
-        for doc in all_docs:
-            content_lower = doc.get('content', '').lower()
-            name_lower = doc.get('name', '').lower()
-            
-            # Calcular relevancia básica
-            relevance_score = 0
-            for word in query_words:
-                if word in content_lower:
-                    relevance_score += content_lower.count(word)
-                if word in name_lower:
-                    relevance_score += 5  # Bonus por estar en el nombre
-            
-            if relevance_score > 0:
-                doc['relevance_score'] = relevance_score
-                relevant_docs.append(doc)
-        
-        # Ordenar por relevancia
-        relevant_docs.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
-        
-        logger.info(f"🔍 Found {len(relevant_docs)} relevant documents for query: {query}")
-        return relevant_docs[:5]  # Top 5 más relevantes
-        
-    except Exception as e:
-        logger.error(f"❌ Error searching documents: {e}")
-        return []
-
 # ENDPOINTS
 
 @app.get("/")
@@ -129,13 +84,13 @@ async def root():
     processor_info = processor_registry.get_processor_info()
     
     return {
-        "message": "🤖 RAG Service - Modular Architecture",
+        "message": "🤖 RAG Service - Modular Architecture (Minimal)",
         "status": "active",
         "environment": "production",
-        "database": "Supabase (aws-0-us-east-2.pooler.supabase.com)",
+        "database": "Supabase",
         "ai": "OpenAI GPT-3.5",
         "architecture": "modular",
-        "version": "7.0.0-modular",
+        "version": "7.0.0-modular-minimal",
         **processor_info
     }
 
@@ -146,7 +101,6 @@ async def upload_document(
 ):
     """
     🚀 Endpoint modular para upload de documentos
-    Automáticamente selecciona el procesador adecuado según el tipo de archivo
     """
     try:
         logger.info(f"📤 Upload request: {file.filename} by user {user_id}")
@@ -232,7 +186,6 @@ async def analyze_document(
 ):
     """
     🧠 Endpoint para análisis avanzado de documentos
-    Disponible para procesadores que soporten análisis avanzado
     """
     try:
         logger.info(f"🧠 Analysis request: {file.filename}")
@@ -270,13 +223,12 @@ async def analyze_document(
                 content=basic_result
             )
         
-        # Análisis avanzado (ej: gráficas para Excel)
+        # Análisis avanzado
         advanced_analysis = await processor.generate_charts(file_content, file.filename)
         
         # Guardar con análisis enriquecido
         document_id = str(uuid.uuid4())
         
-        # Crear contenido enriquecido
         enriched_content = basic_result["extracted_text"]
         if basic_result.get("analysis"):
             analysis_text = f"\n\nANÁLISIS AVANZADO:\n{basic_result['analysis']}"
@@ -314,68 +266,35 @@ async def analyze_document(
 @app.post("/chat")
 async def chat_with_documents(request: ChatRequest):
     """
-    💬 Endpoint de chat inteligente
-    Busca en documentos y responde usando OpenAI
+    💬 Endpoint de chat básico (sin búsqueda por ahora)
     """
     try:
         logger.info(f"💬 Chat request from user {request.user_id}: {request.message}")
         
-        # Buscar documentos relevantes
-        documents = search_documents(request.message, request.user_id)
-        
-        if not documents:
-            return {
-                "response": "No encontré documentos relevantes para tu pregunta. ¿Podrías subir algunos documentos primero?",
-                "sources": [],
-                "document_count": 0
-            }
-        
-        # Preparar contexto
-        context = "\n\n".join([doc['content'] for doc in documents[:3]])
-        
-        # Detectar si es pregunta sobre análisis
-        analysis_keywords = ['gráfica', 'análisis', 'estadística', 'insight', 'patrón', 'recomenda']
-        is_analysis_question = any(keyword in request.message.lower() for keyword in analysis_keywords)
-        
-        # Configurar prompt según el tipo de pregunta
-        if is_analysis_question:
-            system_prompt = """Eres un asistente experto en análisis de datos empresariales.
-            
-Cuando respondas sobre archivos de Excel o análisis:
-1. Proporciona insights claros y accionables
-2. Menciona patrones y tendencias importantes
-3. Sugiere análisis adicionales si es relevante
-4. Usa un lenguaje profesional pero accesible
-5. Si hay gráficas disponibles, menciónalas
-
-Siempre cita las fuentes específicas de donde obtienes la información."""
-        else:
-            system_prompt = """Eres un asistente inteligente que ayuda a responder preguntas basándose en documentos empresariales.
-
-Responde de manera clara y precisa, citando siempre las fuentes específicas.
-Si la información no está en los documentos, menciona que necesitas más contexto."""
-        
-        # Llamada a OpenAI
+        # Por ahora, respuesta simple hasta que tengamos búsqueda funcionando
         response = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": system_prompt},
+                {
+                    "role": "system", 
+                    "content": "Eres un asistente inteligente. El usuario puede subir documentos Excel para análisis. Por ahora, responde que la funcionalidad de búsqueda en documentos se está configurando."
+                },
                 {
                     "role": "user", 
-                    "content": f"Contexto de documentos:\n{context}\n\nPregunta del usuario: {request.message}"
+                    "content": request.message
                 }
             ],
-            max_tokens=1500,
+            max_tokens=500,
             temperature=0.3
         )
         
         logger.info(f"✅ Chat response generated for user {request.user_id}")
         
         return {
-            "response": response.choices[0].message.content,
-            "sources": [doc['name'] for doc in documents[:3]],
-            "document_count": len(documents),
-            "analysis_mode": is_analysis_question
+            "response": response.choices[0].message.content + "\n\nNota: La búsqueda en documentos subidos se está configurando. Por ahora puedes subir archivos Excel para análisis usando el endpoint /analyze.",
+            "sources": [],
+            "document_count": 0,
+            "status": "basic_mode"
         }
         
     except Exception as e:
@@ -391,21 +310,16 @@ Si la información no está en los documentos, menciona que necesitas más conte
 
 @app.get("/processors")
 async def get_processors_info():
-    """
-    🔧 Endpoint para obtener información de procesadores disponibles
-    """
+    """🔧 Información de procesadores disponibles"""
     return processor_registry.get_processor_info()
 
-# FUNCIONES DE UTILIDAD (mantenidas del archivo original)
+# FUNCIÓN DE UTILIDAD
 
 def save_document_to_supabase(document_id: str, user_id: str, filename: str, content: str, file_size: int):
-    """Guardar documento usando database.py - VERSIÓN CORREGIDA"""
+    """Guardar documento usando database.py"""
     try:
-        logger.info(f"📤 DEBUG: Saving to database using database.py functions")
-        logger.info(f"📤 DEBUG: Filename: {filename}")
-        logger.info(f"📤 DEBUG: Content length: {len(content)} chars")
+        logger.info(f"📤 Saving document: {filename}")
         
-        # USAR LA FUNCIÓN DE database.py QUE YA FUNCIONA
         result = create_document(
             name=filename,
             content=content,
@@ -414,19 +328,19 @@ def save_document_to_supabase(document_id: str, user_id: str, filename: str, con
             metadata={'document_id': document_id}
         )
         
-        logger.info(f"✅ SUCCESS: Document saved via database.py: {result}")
+        logger.info(f"✅ Document saved: {result}")
         return result
         
     except Exception as e:
-        logger.error(f"❌ Error saving via database.py: {e}")
+        logger.error(f"❌ Error saving document: {e}")
         raise
 
-# Inicialización del servidor
+# Inicialización
 if __name__ == "__main__":
     import uvicorn
     
-    logger.info("🚀 Starting RAG Service with Modular Architecture")
-    logger.info(f"📊 Processors available: {[p.processor_name for p in processor_registry.processors]}")
-    logger.info(f"📁 Supported extensions: {processor_registry.list_supported_extensions()}")
+    logger.info("🚀 Starting RAG Service with Modular Architecture (Minimal)")
+    logger.info(f"📊 Processors: {[p.processor_name for p in processor_registry.processors]}")
+    logger.info(f"📁 Extensions: {processor_registry.list_supported_extensions()}")
     
     uvicorn.run(app, host="0.0.0.0", port=8080)
